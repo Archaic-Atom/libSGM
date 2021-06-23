@@ -1,5 +1,12 @@
 # libSGM
 ---
+We fork the code from https://github.com/fixstars/libSGM
+
+Thanks @fixstars for the open-source SGM code for Cuda.
+
+In this repository, we only add an interface for python.
+
+---
 Semi-Global MatchingをベースとしたCUDA実装です。
 
 ## 概要

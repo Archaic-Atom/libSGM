@@ -1,6 +1,14 @@
 # libSGM
 ---
-A CUDA implementation performing Semi-Global Matching.
+We fork the code from https://github.com/fixstars/libSGM
+
+Thanks @fixstars for the open-source SGM code for Cuda.
+
+In this repository, we only add an interface for python.
+
+---
+A CUDA implementation p
+erforming Semi-Global Matching.
 
 ## Introduction
 ---
