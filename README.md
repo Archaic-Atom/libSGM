@@ -4,7 +4,7 @@ We fork the code from https://github.com/fixstars/libSGM
 
 Thanks @fixstars for the open-source SGM code for Cuda.
 
-In this repository, we only add an interface for python.
+In this repository, we only add an interface for python (sample/sgm\_interface_fast\_system).
 
 ---
 A CUDA implementation p
