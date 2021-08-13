@@ -70,23 +70,30 @@ cv::Mat SgmInterface::ReadImg(char* path)
 	return img_mat;
 }
 
-const double SgmInterface::Inference(char* left_path, char* right_path, unsigned char* disp_data)
-{
-	cv::Mat img_mat_1 = ReadImg(left_path);
-	cv::Mat img_mat_2 = ReadImg(right_path);
 
-	ASSERT_MSG(img_mat_1.size() == img_mat_2.size() 
-		&& img_mat_1.type() == img_mat_2.type(), 
+const double SgmInterface::SgmInference(cv::Mat left_img_mat, cv::Mat right_img_mat, unsigned char* disp_data, bool is_right)
+{
+	ASSERT_MSG(left_img_mat.size() == right_img_mat.size() 
+		&& left_img_mat.type() == right_img_mat.type(), 
 		"input images must be same size and type.");
 
 	const int disp_size = m_iDispSize;
 	ASSERT_MSG(disp_size == 64 || disp_size == 128 || disp_size == 256, 
 		"disparity size must be 64, 128 or 256.");
 
-	const int width = img_mat_1.cols;
-	const int height = img_mat_1.rows;
+	if(is_right){
+		cv::flip(left_img_mat, left_img_mat, 1);
+		cv::flip(right_img_mat, right_img_mat, 1);
+		cv::Mat tmp_mat;
+		tmp_mat = left_img_mat;
+		left_img_mat = right_img_mat;
+		right_img_mat = tmp_mat;
+	}
+	
+	const int width = left_img_mat.cols;
+	const int height = left_img_mat.rows;
 
-	const int input_depth = img_mat_1.type() == CV_8U ? 8 : 16;
+	const int input_depth = left_img_mat.type() == CV_8U ? 8 : 16;
 	const int input_bytes = input_depth * width * height / 8;
 	const int output_depth = disp_size < 256 ? 8 : 16;
 	const int output_bytes = output_depth * width * height / 8;
@@ -98,13 +105,11 @@ const double SgmInterface::Inference(char* left_path, char* right_path, unsigned
 			: static_cast<uint16_t>(sgm.get_invalid_disparity());
 
 	cv::Mat disparity(height, width, output_depth == 8 ? CV_8U : CV_16U, (void *) disp_data);
-	// cv::Mat disparity_8u;
 
 	device_buffer d_I1(input_bytes), d_I2(input_bytes), d_disparity(output_bytes);
 
-
-	cudaMemcpy(d_I1.data, img_mat_1.data, input_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_I2.data, img_mat_2.data, input_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_I1.data, left_img_mat.data, input_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_I2.data, right_img_mat.data, input_bytes, cudaMemcpyHostToDevice);
 
 	const auto t1 = std::chrono::system_clock::now();
 
@@ -116,88 +121,29 @@ const double SgmInterface::Inference(char* left_path, char* right_path, unsigned
 	const double fps = 1e6 / duration;
 
 	cudaMemcpy(disparity.data, d_disparity.data, output_bytes, cudaMemcpyDeviceToHost);
-	//disparity.convertTo(disparity_8u, CV_8U, 255. / disp_size);
 
-	// cv::imwrite("1.png", disparity);
+	if(is_right){
+		cv::flip(disparity, disparity, 1);
+	}
 
 	return fps;
 }
 
 
-double c_sgm_interface(char* left_path, char* right_path, int disp_size, unsigned char* disp_data)
+const double SgmInterface::Inference(char* left_path, char* right_path, unsigned char* disp_data, bool is_right)
+{
+	cv::Mat left_img_mat = ReadImg(left_path);
+	cv::Mat right_img_mat = ReadImg(right_path);
+
+	return SgmInference(left_img_mat, right_img_mat, disp_data, is_right);
+}
+
+
+double c_sgm_interface(char* left_path, char* right_path, int disp_size, unsigned char* disp_data, bool is_right)
 {
 	double res = 0;
 	SgmInterface* sgm_interface = SgmInterface::CreateSgmInterface(disp_size);
-	res = sgm_interface->Inference(left_path, right_path, disp_data);
+	res = sgm_interface->Inference(left_path, right_path, disp_data, is_right);
 	SgmInterface::DeleteSgmInterface();
 	return res;
 }
-
-
-/************************************************************************************************************
-int main(int argc, char* argv[])
-{
-	if (argc < 3) {
-		std::cout << "usage: " << argv[0] << " left-image-format right-image-format [disp_size]" << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
-
-	const int first_frame = 1;
-
-	cv::Mat I1 = cv::imread(format_string(argv[1], first_frame), -1);
-	cv::Mat I2 = cv::imread(format_string(argv[2], first_frame), -1);
-	const int disp_size = argc >= 4 ? std::stoi(argv[3]) : 128;
-
-	ASSERT_MSG(!I1.empty() && !I2.empty(), "imread failed.");
-	ASSERT_MSG(I1.size() == I2.size() && I1.type() == I2.type(), "input images must be same size and type.");
-	ASSERT_MSG(I1.type() == CV_8U || I1.type() == CV_16U, "input image format must be CV_8U or CV_16U.");
-	ASSERT_MSG(disp_size == 64 || disp_size == 128 || disp_size == 256, "disparity size must be 64, 128 or 256.");
-
-	const int width = I1.cols;
-	const int height = I1.rows;
-
-	const int input_depth = I1.type() == CV_8U ? 8 : 16;
-	const int input_bytes = input_depth * width * height / 8;
-	const int output_depth = disp_size < 256 ? 8 : 16;
-	const int output_bytes = output_depth * width * height / 8;
-
-	sgm::StereoSGM sgm(width, height, disp_size, input_depth, output_depth, sgm::EXECUTE_INOUT_CUDA2CUDA);
-
-	const int invalid_disp = output_depth == 8
-			? static_cast< uint8_t>(sgm.get_invalid_disparity())
-			: static_cast<uint16_t>(sgm.get_invalid_disparity());
-
-	cv::Mat disparity(height, width, output_depth == 8 ? CV_8U : CV_16U);
-	cv::Mat disparity_8u;
-
-	device_buffer d_I1(input_bytes), d_I2(input_bytes), d_disparity(output_bytes);
-
-	while(true){
-	int frame_no = first_frame;
-	I1 = cv::imread(format_string(argv[1], frame_no), -1);
-	I2 = cv::imread(format_string(argv[2], frame_no), -1);
-	if (I1.empty() || I2.empty()) {
-			frame_no = first_frame;
-			return -1;
-		}
-
-	cudaMemcpy(d_I1.data, I1.data, input_bytes, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_I2.data, I2.data, input_bytes, cudaMemcpyHostToDevice);
-
-	const auto t1 = std::chrono::system_clock::now();
-
-	sgm.execute(d_I1.data, d_I2.data, d_disparity.data);
-	cudaDeviceSynchronize();
-
-	const auto t2 = std::chrono::system_clock::now();
-	const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-	const double fps = 1e6 / duration;
-
-	cudaMemcpy(disparity.data, d_disparity.data, output_bytes, cudaMemcpyDeviceToHost);
-	disparity.convertTo(disparity_8u, CV_8U, 255. / disp_size);
-
-	//cv::imwrite("1.png", disparity_8u);
-	std::cout << fps << std::endl;
-}
-}
-*******************************************************************************************************/
